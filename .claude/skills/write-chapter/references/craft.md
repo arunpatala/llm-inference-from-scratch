@@ -8,8 +8,10 @@ Sources: [Diátaxis](https://diataxis.fr/) (the documentation framework behind
 Stripe's, Django's, and Python's own docs), [Google's developer documentation
 style guide](https://developers.google.com/style), the
 [worked-example effect](https://en.wikipedia.org/wiki/Worked-example_effect)
-from cognitive load research, and Rafael Vieira's ["100 things I learned
-writing my first technical book"](https://dev.to/viebel/100-things-i-learned-writing-my-first-technical-book-2np3).
+from cognitive load research, Rafael Vieira's ["100 things I learned
+writing my first technical book"](https://dev.to/viebel/100-things-i-learned-writing-my-first-technical-book-2np3),
+and [petergyang/no-ai-slop](https://github.com/petergyang/no-ai-slop) on
+editing toward voice rather than toward generic polish.
 
 ## 1. Decide the chapter's mode before writing a word
 
@@ -87,6 +89,13 @@ the technique.
   and direct, not pedantic.
 - Let the reader feel smart. Explain the *why* behind a design choice, not
   the obvious mechanics they can already read from the code.
+- Make the minimum effective edit to an interview answer, not the maximum
+  one. The user's answers are the closest thing this book has to a draft in
+  a real voice — fix unclear grammar and cut actual AI-pattern smells, but
+  don't sand a blunt, digressive, or plainly-worded answer into uniform
+  "polished" prose. If the answer used a rough analogy or a specific
+  complaint, keep the rough analogy and the specific complaint; don't
+  launder them into something a textbook would say instead.
 
 ## 6. Structural discipline per chapter
 
@@ -121,3 +130,7 @@ Techniques the user finds worth adding go here, dated, same as
 - (initial version — seeded from Diátaxis, Google's developer style guide,
   worked-example-effect research, and "100 things I learned writing my first
   technical book")
+- 2026-07-23 — added the minimum-effective-edit / voice-preservation
+  principle from [petergyang/no-ai-slop](https://github.com/petergyang/no-ai-slop)
+  to §5, since our chapters are built from the user's own interview answers
+  rather than from scratch.

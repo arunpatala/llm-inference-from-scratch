@@ -36,7 +36,7 @@ def load_banned_words(rules_path):
         line = line.strip()
         if not line.startswith("- "):
             continue
-        phrase = line[2:].split(" (say:", 1)[0].strip()
+        phrase = line[2:].split(" (", 1)[0].strip()
         if phrase:
             words.append(phrase)
     return words
