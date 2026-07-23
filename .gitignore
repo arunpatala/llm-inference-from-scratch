@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# model weights / datasets, never commit these
+*.safetensors
+*.bin
+*.gguf
+*.pt
+*.pth
+
+# local run artifacts
+results/*
+!results/.gitkeep
+
+# mdBook build output
+book/book/
+
+.DS_Store
