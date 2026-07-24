@@ -426,28 +426,141 @@ a follow-up later, not something to fill in generically.
     merge algorithm at all — they're injected as reserved vocab entries that
     bypass merging entirely. Why do they need to be handled separately?
 
-    _(answer here)_
+    A boundary/stop token has to be one atomic ID that ordinary text can
+    neither fragment into nor accidentally produce — which is exactly why it
+    lives outside the merge algorithm as a reserved entry.
+
+    Without reservation, `<|im_end|>` would just go through normal BPE and come
+    out as ~5 ordinary text tokens (verified in Q6: the literal string encodes
+    to `[82639, 318, 6213, 91, 29]` with special parsing off). That's useless as
+    a stop signal: (a) the engine's decode loop watches for one specific id
+    (151645) to halt, and matching a *sequence* of ordinary tokens is fragile;
+    and (b) those same ordinary tokens appear in normal text, so you could never
+    tell a real turn boundary from text that merely contains those pieces.
+
+    Reserved-ness has to hold in both directions:
+    - User input: someone typing the literal string "<|im_end|>" (e.g. asking a
+      question *about* special tokens, exactly what we're doing in this
+      interview) must not be read as the real control token. That's the engine's
+      job to enforce when encoding user content (Q6 injection finding).
+    - Model output: the model's own generated answer must never *accidentally*
+      emit the boundary mid-sentence. Because `<|im_end|>` is reserved and BPE
+      can't build it from ordinary bytes, the marker only appears when something
+      deliberately places it — so the model won't randomly end its turn while
+      writing a normal reply.
 
 16. "Glitch tokens" (the SolidGoldMagikarp phenomenon) are real vocab entries
     that make models output garbage when they appear, caused by a mismatch
     between the tokenizer's training corpus and the model's training corpus.
     Does that risk apply to a small model like Qwen3-0.6B, in your view?
 
-    _(answer here)_
+    Yes — and arguably more so at 0.6B. First, the right framing: this is a
+    model-training artifact, NOT a tokenization failure. The tokenizer encodes
+    the token fine; the failure is that the model's *embedding* for that token
+    was never trained. (And it's a single token, not an unseen combination —
+    one glitch token alone produces garbage, whereas an unseen combination of
+    well-trained tokens just generalizes imperfectly.)
+
+    The causal chain: the tokenizer is built once, for a big shared corpus, and
+    earns a vocab slot for anything frequent in *that* corpus. A smaller model
+    is then trained on a subset with less capacity and training budget, so some
+    of those tokens are barely or never seen during model training — their
+    embeddings stay near random init, and the model has no idea what to do when
+    one shows up.
+
+    Maps directly onto Qwen3-0.6B: it reuses Qwen2's tokenizer (the full ~151k
+    vocab, shared across the entire Qwen family including the big models), while
+    the 0.6B has the least capacity/budget of the family. Exercise 5 showed the
+    embedding table has ~267 rows the tokenizer never even emits — the
+    definitional extreme: slots that exist with guaranteed-untrained embeddings.
+    [optional: hunt for actual undertrained tokens on the real model via the
+    "Fishing for Magikarp" method — anomalous embedding norm / near-mean
+    embedding — before drafting.]
 
 17. Vocab size isn't free — it directly sets the size of two of the model's
     biggest weight matrices (embedding table and LM head). For Qwen3-0.6B's
     ~151k-token vocab, what do you think that costs in raw parameters, and
     does that change how you think about vocab size as a design choice?
 
-    _(answer here)_
+    The embedding table (vocab x hidden) dominates as the model gets smaller.
+    Arithmetic, grounded on the real model: 151936 x 1024 = 155.6M params. The
+    actual total is 596M (so "0.6B" is ~596M), and that one matrix is 26.1% of
+    the model — over a quarter.
+
+    Tying is the lever. Qwen3-0.6B ties the input embedding and the output LM
+    head (tie_word_embeddings=True): one matrix used twice. Untied, it would
+    need a second 155.6M matrix, pushing the model to 751.6M and making the two
+    vocab matrices 41.4% of the whole — for zero new capability. So at 0.6B,
+    tying is nearly mandatory, and there's real pressure to keep the vocab
+    modest.
+
+    The scaling take: embedding size is fixed by vocab x hidden, while total
+    params scale with depth and width^2, so the fixed 155.6M is a shrinking
+    fraction as the model grows — ~26% at 0.6B but only ~2% at 8B. That's why
+    the big Qwen3 models (8B+) can afford to untie (03_algorithms) and small
+    ones can't. Ties back to the Q3 trade-off: bigger vocab shortens sequences
+    but grows exactly these two matrices.
+
+    Related technique the author has seen: filtering/pruning vocab tokens during
+    finetuning to cut out-of-domain vocab (restricting the output logit space /
+    dropping unused token slots). [capture as a note if it recurs — real
+    inference-adjacent optimization, connects to the untrained-token discussion
+    in Q16.]
+
+    Follow-up the author raised (belongs in the EMBEDDINGS chapter, capture
+    there): why untie at all if tying is cheaper? Because input embedding
+    (token->vector) and LM head (hidden->logits) do different jobs, and tying
+    forces them equal. Tying is both param-saving AND a regularizer/inductive
+    bias (Press & Wolf 2017, "Using the Output Embedding to Tie Word
+    Embeddings"), which helps small/data-limited models. Untying gives more
+    capacity and lets the two matrices specialize independently; at scale the
+    regularization is no longer needed, the tying constraint costs expressiveness,
+    and the extra params are cheap (~2% at 8B) — so big models untie. Rule falls
+    out of scale: parameter/data-constrained -> tie; scale to spend -> untie.
 
 18. When batching multiple prompts of different lengths (Module 2's
     territory), padding side — left vs. right — actually affects
     correctness, not just style. Do you already know why, or want to reason
     through it together here?
 
-    _(answer here)_
+    Rule: left-pad to generate, right-pad to train — and the why, derived:
+
+    Batched generation produces the next token for all sequences at the same
+    position, the last column. Left-padding aligns every sequence's real last
+    token in that last column, so one generation step is correct for all at
+    once. Right-padding would leave a PAD in the last column for the shorter
+    sequences, so the model would generate "after the pads" — anchored to the
+    wrong position — which is the correctness bug.
+
+    Two things have to be right for left-pad to work:
+    - Attention mask must exclude the left pad tokens. (Note the asymmetry: with
+      RIGHT padding the trailing pads are auto-ignored by causal masking — a
+      real token at position i only attends to <= i, never to pads after it — so
+      right-pad needs no extra masking to keep the real tokens clean. That's why
+      right-pad is fine for training/scoring, where you read logits at known
+      positions. Left-pad's pads come BEFORE the real tokens, so they must be
+      masked explicitly.)
+    - RoPE position ids must be shifted. If you number positions 0,1,2... from
+      the leftmost pad, real tokens get offset by the pad count, and sequences
+      with different pad counts put identical content at different positions —
+      inconsistent. Position ids must be computed from the mask so position 0 is
+      the first REAL token, so the same content always lands at the same
+      positions regardless of how many pads precede it.
+
+    (Module 2 territory; derived here from causal masking + generate-at-last-
+    position + RoPE-depends-on-position.)
+
+    Author's follow-up (real-engine answer, forward-note to FlashAttention /
+    continuous-batching modules): production engines mostly don't pad at all —
+    they PACK variable-length sequences into one contiguous buffer (no pad
+    tokens) and use FlashAttention's varlen path with a `cu_seqlens` array
+    marking each sequence's boundaries. Wins: no wasted compute/memory on pads
+    (big when lengths vary a lot), and the padding-side trap disappears. The
+    same two correctness requirements still apply, enforced differently: (1) no
+    cross-sequence attention — `cu_seqlens` gives the kernel a block-diagonal
+    structure that replaces the pad mask; (2) per-sequence RoPE positions —
+    each packed sequence's position ids reset to 0 at its own start. So padding
+    is the naive baseline; packing/varlen is the optimization.
 
 19. Speculative decoding (Module 6) has a hard requirement: draft and target
     models must share the exact same tokenizer and vocabulary, because the
@@ -455,14 +568,85 @@ a follow-up later, not something to fill in generically.
     mismatch collapses the acceptance rate toward zero. Does that settle how
     you'd pick a draft model for Qwen3-0.6B, or is it still open?
 
-    _(answer here)_
+    Why mismatch collapses acceptance (part 1): the target verifies the draft's
+    proposed tokens by comparing probability distributions over token IDs. If
+    the two tokenizers differ, token id 5000 means a different string to each
+    model, so the comparison is meaningless and acceptance goes to ~0. Sharing
+    the tokenizer is what makes "the target's probability for the token the
+    draft proposed" a well-defined quantity.
+
+    The Qwen3-0.6B twist + resolution (author's insight, then grounded): 0.6B is
+    already the small model, so a draft would be tiny — and from Q17, the 155.6M
+    vocab matrix would *dominate* such a draft, with the LM head over 151k tokens
+    as the bottleneck. The fix is to trim the DRAFT's vocab by frequency while
+    the TARGET still verifies over the full shared vocab — which keeps the
+    output distribution provably unchanged (lossless), because correctness lives
+    in the target's full-vocab check, not the draft's proposals. The draft just
+    skips rarely-correct low-frequency tokens (most probability mass is in the
+    common tokens — same frequency story as Q14 / exercise 4).
+
+    Real, citable family (searched): FR-Spec (frequency-ranked draft vocab, ~75%
+    LM-head compute cut, lossless — arxiv 2502.14856), VocabTrim, SlimSpec
+    (low-rank draft LM-head — 2605.10453), DynaSpec (context-aware dynamic vocab
+    — 2510.13847), NanoSpec (2605.26444). MiniCPM4 ships FR-Spec (2506.07900).
+    So for Module 6 this is a concrete, decided-able direction: self/small draft
+    with a frequency-trimmed LM head, full-vocab verification on the target.
+
+    Confirmed from the FR-Spec paper (arxiv 2502.14856 / ACL 2025 long.198),
+    not guessed — corrects an intuition that trimming works like BPE byte
+    fallback (it does not):
+    - FR-Spec is TRAINING-FREE: no retraining. It extracts a submatrix (rows for
+      the top-m frequent tokens) from the existing frozen full-vocab LM head.
+    - The trim is on the LM HEAD (output) ONLY, not the input embedding — the
+      draft still reads/embeds the full vocabulary; only its output projection
+      is restricted.
+    - No decomposition: out-of-subset (rare) tokens are simply never proposed by
+      the draft — "not decomposed, approximated, or represented." This is the
+      opposite of BPE, which decomposes rare tokens into byte pieces. Here the
+      draft omits them and the target produces them whole on rejection.
+    - Lossless because the target verifies over the FULL vocab: the draft only
+      constrains candidate generation (speedup); verification is mathematically
+      unchanged (correctness).
+    - Caveat: this is FR-Spec specifically. SlimSpec (arxiv 2605.10453) uses a
+      low-rank draft LM head and may involve training — "trim-vocab spec
+      decoding" is not monolithic.
+
+    Refinement (author intuited this unprompted; it's a real paper — "Out-of-
+    Vocabulary Sampling Boosts Speculative Decoding", arxiv 2506.03206):
+    instead of just omitting rare tokens, add ONE aggregate "OOV"/rest token to
+    the draft head that carries the combined probability mass of all omitted
+    tokens. Then the draft can *predict the rare case itself* — when the OOV
+    token fires, it stops drafting and defers to the target (which samples the
+    rare token from the full vocab). Lossless via rejection-sampling accounting:
+    the draft's rejection probability for the OOV case equals the aggregate mass
+    it assigned to non-draft tokens. Why it beats plain FR-Spec: FR-Spec wastes
+    a step proposing a wrong frequent token that then gets rejected; the OOV-
+    token method knows it's in rare-token territory and defers cleanly, no
+    wasted wrong-guess.
 
 20. Different model families use completely different tokenizers, so "1000
     tokens" means a different amount of actual text depending on the model.
     Why does that matter specifically for an inference engine — not just as
     a token-counting curiosity?
 
-    _(answer here)_
+    Setup (author): for the same text, a smaller vocab needs more tokens and a
+    bigger vocab needs fewer, so token counts for the same answer aren't
+    comparable across models with different tokenizers.
+
+    Consequence 1 — throughput benchmarks lie. tokens/sec rewards a fragmented
+    tokenizer for inflating the token count. Model A at 100 tok/s with 4
+    bytes/token = 400 bytes/s; Model B at 120 tok/s with 2 bytes/token = 240
+    bytes/s — so A delivers text ~1.7x faster despite showing *lower* tok/s.
+    Two engines/models are only comparable in bytes/sec (or chars/sec), or by
+    normalizing tok/s by bytes-per-token. "We hit 120 tok/s vs their 100" can
+    mean you're actually slower for the user.
+
+    Consequence 2 — token-denominated budgets. Context window and KV cache are
+    counted in tokens, not text. So for the identical document, the model with
+    the less efficient tokenizer (more tokens per text) fits *less* of it in the
+    same context-window limit (smaller effective context in text terms) and uses
+    *more* KV memory. An efficient tokenizer quietly buys more usable context
+    and cheaper KV for the same content.
 
 ## Set C — harder
 
