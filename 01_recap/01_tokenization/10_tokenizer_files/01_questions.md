@@ -12,7 +12,28 @@ landscape are in `coverage_outline.md`.
    `chat_template.jinja` (~4 KB). What does each one hold, and why is one of them
    thousands of times bigger than the others?
 
-   _(answer here)_
+   Roles (author): tokenizer.json = the token-str<->id data; tokenizer_config
+   = special tokens + settings; chat_template.jinja = the Jinja messages->string
+   template. All correct.
+
+   Why 11 MB — it holds TWO big data structures, not one (author had the vocab,
+   the merges were taught). Grounded on the real file:
+   - vocab: 151,643 token->id entries (~4.7 MB), e.g. ('!',0), ('"',1).
+   - merges: 151,387 ORDERED merge rules (~4.5 MB), e.g. [Ġ,Ġ], [ĠĠ,ĠĠ], [i,n].
+   Together ~9.2 MB of the 11; the rest is the small pipeline objects.
+   Why both are needed: vocab = the ingredients (which tokens exist + IDs, used
+   for the final string<->id lookup); merges = the recipe (HOW to build tokens
+   from bytes — apply in learned order until none apply, exactly Q27 determinism
+   and the 05_bpe/encode_with_merges exercise). The example merges are the same
+   kind of list train_toy_bpe produced: Qwen's first merges are "two spaces",
+   "four spaces" (code indentation), then "in". (Mild redundancy: the vocab is
+   derivable from merges but stored explicitly for fast lookup.)
+
+   Division by kind: tokenizer.json = the tokenizer's DATA (vocab + merges +
+   pipeline = what the tokenizer IS); tokenizer_config.json = metadata/settings
+   (which class, which token is eos/pad/bos, model_max_length, flags = how
+   transformers USES it). The big file is the tokenizer; the small file
+   configures it.
 
 2. `tokenizer.json` is described as holding the whole tokenizer "pipeline." Given
    the standard pipeline — normalize -> pre-tokenize -> model -> post-process ->
