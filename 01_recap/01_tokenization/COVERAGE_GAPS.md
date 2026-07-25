@@ -15,7 +15,9 @@ prefix caching, KV-cache-motivation-from-the-naive-loop, tied-embedding cost,
 padding side + packing/varlen. Standard courses barely touch these.
 
 ## Genuine gaps to close (inference-relevant, near-universal in HF material)
-Ranked by value.
+Ranked by value. Concept notes for gaps 1-6 (what / why-it-matters / connection,
+grounded on Qwen where marked) are written up in
+`09_pipeline_stages_and_template_extensions.md` — still to interview/fully ground.
 
 - [ ] 1. NORMALIZATION as an explicit pipeline stage — Unicode NFC/NFKC, accent
       stripping, lowercasing, and its LOSSINESS (irreversible, breaks exact
