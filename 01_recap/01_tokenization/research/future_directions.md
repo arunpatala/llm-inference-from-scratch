@@ -248,4 +248,146 @@ identical splitting couldn't help).
   2506.19004.)
 - Same frequency-prior/sub-token family as strawberry + Q14, in multimodal form.
 
-## 4. (next direction — to be added)
+## 4. The tokenizer as an economic + safety attack surface
+
+The fourth security thread (after Q6 injection, Q16 glitch tokens, Q26 GCG), and
+the newest: 2026 work reframes the tokenizer as an *economic* and *safety*
+surface, not just a quality knob.
+
+### Safety: the canonical-vs-fragmented gap (a token-boundary jailbreak)
+
+Mechanism, built from the interview: refusal/safety training is done on TEXT,
+tokenized the CANONICAL (greedy BPE) way, so refusal is keyed to canonical token
+patterns. "Breaking Safety at the Token Boundary" (2607.01239) audited alignment
+data and found ZERO fragmented harmful prompts — safety only ever saw the
+canonical slice of token-space. Force a harmful word to fragment into a
+non-canonical tokenization (Q27: one string, many valid token sequences) and the
+refusal trigger never fires — a fragmentation optimizer flips first-token refusal
+on 80-100% of refused HarmBench prompts.
+
+Why it works is a vicious asymmetry between two things we established:
+- Capability is robust to re-tokenization ("Broken Tokens", 2506.19004: up to
+  93.4% retained under non-canonical segmentation; marginalizing over
+  tokenizations can even beat canonical decoding, 2506.06446). The base model,
+  trained on all of text, still "reads" the fragmented word.
+- Safety is brittle to it — trained only on the canonical slice.
+So fragmentation preserves meaning but destroys refusal. In our terms it's the
+Q12 (extra-space) / Q23 (token-healing) off-distribution-boundary logic,
+weaponized: capability trained on all of token-space, safety on a sliver, attack
+the gap.
+
+Why the obvious fix fails: SFT-on-fragments does NOT generalize (combinatorially
+many fragmentations, Q27), so it's whack-a-mole. The real fix is canonicalization
+before the safety check (or safety at the byte/normalized layer) — but that
+COLLIDES with the robustness finding (models benefit from non-canonical
+flexibility). Safety wants one canonical form; robustness wants many. Unresolved.
+
+### Economic: per-token billing fraud
+
+"Token Inflation" (2605.30040): per-token pricing + hidden reasoning tokens +
+tokenization ambiguity lets a dishonest provider over-report usage undetectably
+(~1,469% average inflation; ~50% "from tokenization ambiguity alone" below
+detection thresholds). It is Q20 turned adversarial — everything is denominated
+in tokens, but the token is an ambiguous, provider-controlled unit, so it becomes
+a TRUST problem. Fix directions: verifiable billing (TEE attestation /
+cryptographic proofs). Related position: "Stop Taking Tokenizers for Granted"
+(2601.13260) argues the tokenizer is a supply-chain surface needing
+pre-deployment audits.
+
+Takeaway: adversarial tokenization is not just "re-optimize a suffix" (Q26) — it
+is a STRUCTURAL gap between where safety lives (canonical token-space) and where
+capability lives (all of token-space), plus an ambiguity that can be monetized.
+
+## 5. Token granularity as a runtime resource-allocation knob (the inference-native one)
+
+We treated granularity as fixed at tokenizer-training time. The newest, most
+inference-relevant idea: make it a RUNTIME knob — spend fine tokens where meaning
+is dense, coarse/merged tokens where it is redundant — jointly optimized against
+KV-cache memory (Q30: KV scales with token count).
+
+How fine-vs-coarse is controlled (4 mechanisms, by where in the stack):
+- Semantic density (SemToken, 2508.15190): a lightweight encoder scores
+  meaning-per-token; low density -> merge into coarse super-tokens, high -> keep
+  fine. 2.4x fewer tokens, 1.9x speedup.
+- Predictability / entropy (BLT-style, from S1): confident -> coarsen, surprised
+  -> fine.
+- Attention importance (KV-side): rarely-attended spans coarsened; SeKV
+  (2606.31145) stores coarse semantic spans and reconstructs token detail on
+  demand ("zoom in"), -53% GPU memory at 128K; sub-token routing (2604.21335)
+  goes below the token, keeping selected groups of each value vector.
+- Learned budget allocation: an optimizer distributes a fixed token budget across
+  regions (AdapTok ILP for video, 2505.17011).
+
+Common theme: a cheap signal (density / entropy / attention / learned predictor)
+decides per-region whether to spend tokens finely or coarsen, applied at the
+input, in the KV cache, or in the model's patching.
+
+Where: coarsen low-information/low-attention parts (boilerplate, repeated context,
+already-summarized history, whitespace); keep fine the high-information parts
+(recent generation frontier, the actual question, heavily-queried spans). What it
+buys (Q30): fewer KV entries for coarse parts -> less KV memory -> longer contexts
+fit, cheaper serving; biggest win at small KV budgets / long context.
+
+Also here: Incremental BPE (ICML 2026 Spotlight, 2605.30813) — a streaming
+tokenizer emitting tokens as boundaries are determined, O(n log^2 t), ~3x over HF
+tokenizers — tokenizer SPEED as an inference bottleneck, straight at Q9/Q30's
+input-side cost.
+
+Framing: granularity stops being a fixed tokenizer decision and becomes a runtime
+resource-allocation problem against KV memory — the most inference-native idea in
+the survey, and directly relevant to this book's later paged-attention / long-
+context modules.
+
+## 6. Beyond text: cross-domain "fixed segmentation is wrong", and the continuous frontier
+
+Zooming out past language, multiple scientific domains independently reached the
+same verdict in 2025-2026: fixed BPE-style segmentation is the wrong prior.
+- DNA: DNAChunker (2601.03019) learns mutation-resilient adaptive segmentation
+  and argues all fixed DNA tokenizations are wrong; Evo 2 (40B) goes the other
+  way — single-nucleotide/byte-level, no learned tokenizer at all.
+- Protein: GeoBPE (2511.11758) does geometric byte-pair encoding of 3D backbones,
+  >10x bits-per-residue reduction with interpretable, function-aligned tokens.
+- Time series: WaveToken wavelet-decomposes then quantizes; a frequency/pattern
+  vocab beats per-sample tokenization.
+- Code: TokDrift (2510.14972) — semantically identical code tokenizes differently
+  under formatting/renaming because BPE boundaries ignore grammar, shifting
+  behavior across 9 code LLMs (a domain instance of Q27 non-compositionality +
+  Q29 bad-fit).
+
+The standout, and the deepest idea: The Geometric Alignment Tax (2604.04155).
+For CONTINUOUS domains, discrete tokenization forces continuous structure through
+a "categorical bottleneck", and — counterintuitively — FINER quantization makes
+the geometry WORSE; a continuous prediction head cuts distortion up to 8.5x. So
+for continuous data the problem is not the vocab size, it is discreteness itself.
+
+BitTokens (2510.06824) is the number-domain version and the direct sequel to Q14:
+instead of splitting a number into per-digit tokens, encode the whole number as
+ONE token via its IEEE-754 float bits — a structural encoding of value, not
+frequency — and small LLMs then learn near-perfect arithmetic. Q14 gave the model
+character-level access to digits; BitTokens gives it the value's bit structure
+directly. (Yet frontier models keep shipping inconsistent BPE digit splits — the
+gap between "solved in isolation" and "shipped".)
+
+The generalizing frame for the chapter: BPE assumes the world is discrete symbols
+where FREQUENCY equals meaning. That is roughly true for text, but false for
+continuous scientific data (geometry, signals) and for structured domains
+(code grammar, DNA codons, numeric place-value) whose real units the
+frequency-merge heuristic ignores. So the tokenization question generalizes to:
+"what is the right atomic unit for THIS domain's structure — and should it be
+discrete at all?" For continuous domains the frontier answer is increasingly
+"a continuous prediction head, no vocabulary."
+
+---
+
+## Closing frame (for the subsection's conclusion)
+
+All six directions are one question in different clothes: the interview treated
+the tokenizer as a fixed, discrete, frequency-learned, compression-optimized,
+once-and-frozen table — and every frontier move relaxes one of those adjectives.
+Learned-latent (S1) relaxes "fixed/discrete"; vocab scaling (S2) relaxes "the
+right size is settled"; reasoning (S3) exposes the cost of "discrete hides
+sub-token structure"; the attack surface (S4) exposes "canonical = trusted";
+runtime granularity (S5) relaxes "once and frozen"; cross-domain (S6) relaxes
+"frequency equals meaning, and the unit is discrete at all". The unifying thesis:
+tokenization is the choice of the model's atomic unit of computation, and the
+field is renegotiating every property of that choice at once.

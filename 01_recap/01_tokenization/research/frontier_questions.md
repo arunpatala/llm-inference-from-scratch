@@ -294,3 +294,81 @@ exact Singh & Strouse overall-accuracy pairs, SlimSpec author-reported figures,
 vendor detokenization/glitch percentages, EvaByte's multibyte window, Adversarial
 Tokenization ASR. Leads seen but not deep-fetched (cite as pointers only):
 FLEXITOKENS, MrT5, TokAlign, BrahmicTokenizer.
+
+---
+
+# Round 2 — cutting-edge / newest (a second survey pass)
+
+A second research pass hunting NEW ground (multimodal, domain-specific,
+learned/dynamic, new pathologies, efficiency, info-theory). Unmarked arXiv IDs
+were confirmed against abstract pages; [snippet-only] = URL real but figures
+unconfirmed. The synthesized directions from these are written up in
+`future_directions.md` S4-S6; this is the raw reference.
+
+## New areas + key papers
+
+- Multimodal / unified: LongCat-Next (2603.27538), UniAudio 2.0 (2602.04683),
+  AR-Omni (2601.17761); image 1D/semantic tokenizers — 1D Semantic Tokenizer
+  end-to-end (2605.00503, ICML 2026 Spotlight), VibeToken (2604.24885), ResTok
+  (2601.03955); video — VideoFlexTok (2604.12887), AdapTok (2505.17011); audio —
+  EntangleCodec (2606.02739); discrete-vs-continuous — BitDance binary tokens
+  (2602.14041), DisCon (2507.01756), MacTok (2603.29634), Selftok
+  fidelity-vs-reasoning (2505.07538).
+- Domain-specific: Geometric Alignment Tax (2604.04155), TokDrift code
+  (2510.14972), DNAChunker (2601.03019) vs Evo 2 byte-level
+  (biorxiv 2025.02.18.638918), GeoBPE protein (2511.11758, bench 2503.00089),
+  BitTokens IEEE-754 numbers (2510.06824), FASTer robotics (2512.04952),
+  WaveToken time-series, Smirk chemistry audit (2409.15370).
+- Learned/dynamic beyond BLT/H-Net: end-to-end tokenization via RL (2602.13940),
+  FLEXITOKENS (2507.12720), zip2zip inference-time growing vocab (2506.01084),
+  Scratchpad Patching (2605.09630), byteification/Bolmo (2512.15586 [snippet]),
+  byte-level distillation (2602.01007), cross-tokenizer distillation via byte
+  interface (2604.07466 [snippet]).
+- Pathologies: Breaking Safety at the Token Boundary (2607.01239), Token Inflation
+  billing fraud (2605.30040), Say Anything but This (2601.14658), Broken Tokens
+  (2506.19004 [snippet]) vs Canonical AR Generation (2506.06446 [snippet]),
+  Parity-Aware BPE (2508.04796), Phonemes/IPA (2606.20993), detokenization circuit
+  "Word Factory" (2606.08562), TokSuite controlled tokenizer science (2512.20757).
+- Efficiency/long-context: Incremental BPE streaming (2605.30813, ICML 2026
+  Spotlight), SemToken (2508.15190), sub-token KV routing (2604.21335), SeKV
+  (2606.31145), latent context LMs (2606.09659), OccamToken VLM pruning
+  (2605.29657).
+- Info-theory / position: Information-Theoretic Perspective on Tokenizers
+  (2601.09039), "Forget BIT, It is All about TOKEN" (2511.01202), Stop Taking
+  Tokenizers for Granted (2601.13260), LUMI tokenizer-agnostic image compression
+  (2607.08221).
+
+## New cutting-edge open questions
+
+1. Which learned-segmentation objective (RL/score-function vs straight-through vs
+   entropy-model) scales past ~1B, and does any beat BLT/H-Net at matched FLOPs?
+2. Is there a safety-preserving canonicalization layer that closes the
+   token-boundary jailbreak without breaking legitimate code/multilingual input?
+3. Should decoding marginalize over tokenizations by default (models handle
+   non-canonical well) — and what is the safety cost, since fragmentation is the
+   attack surface?
+4. Can per-token billing be made verifiable (TEE / cryptographic proofs) so
+   tokenization ambiguity cannot be monetized against users?
+5. How much reasoning/calibration/hallucination variance is the tokenizer's alone
+   (TokSuite-style controlled swaps), separable from scale?
+6. Does "token as fundamental unit" / directed-rate-distortion yield an
+   operational bound on achievable KV/context compression, or is it conceptual?
+7. One discrete space for text+image+audio+video generation AND understanding, or
+   does understanding want semantic/continuous and generation want fine-grained?
+8. Why do binary/bit tokens beat classic VQ — is codebook collapse the whole
+   story, and does it survive at high-res text-to-image scale?
+9. Can token granularity (bytes -> BPE -> semantic chunks -> gist) become a
+   continuous runtime knob jointly optimized against KV memory?
+10. Should continuous-domain FMs abandon cross-entropy-over-vocab for continuous
+    prediction heads (the categorical bottleneck), and where does that break?
+11. Is there a pre-training-free metric predicting downstream tokenizer quality
+    across domains (molecules, proteins, code)?
+12. One mechanism for "domain-unit-aligned" boundaries (grammar/codon/place-value)
+    or is each domain irreducibly bespoke?
+13. At 1M+ context, when does tokenizer THROUGHPUT (not quality) become binding,
+    and how do dynamic tokenizers trade against fast fixed ones?
+14. Can sub-token KV routing and semantic-span caching unify into variable
+    resolution both across spans and within a value vector?
+15. Does AR-ordered (Bellman-consistent) discrete tokenization actually help
+    RL/reasoning over generated media (Selftok), or can continuous be made equally
+    RL-friendly?
