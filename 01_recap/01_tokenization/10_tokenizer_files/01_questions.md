@@ -41,20 +41,58 @@ landscape are in `coverage_outline.md`.
    stage does each map to? (Qwen's actually has: normalizer, pre_tokenizer,
    model, post_processor, decoder, added_tokens.)
 
-   _(answer here)_
+   [Taught — author didn't know; grounded on the real tokenizer.json sections.]
+
+   Mapping (section -> stage -> what it does in Qwen):
+   - normalizer -> NORMALIZE: {type: NFC} Unicode normalization (gap 1).
+   - pre_tokenizer -> PRE-TOKENIZE: a Sequence of Split (the regex) + ByteLevel.
+     The Split regex is the Q22 category pre-split — its pattern has \p{L}+ (letter
+     runs), separate punctuation/whitespace groups, and \p{N} which matches a
+     SINGLE digit (that's Q14 digit-splitting, right in the regex). ByteLevel then
+     maps raw bytes to the visible Ġ-alphabet (Q12 space-as-Ġ).
+   - model -> MODEL: type BPE, apply vocab + merges within each chunk (Q1 trace).
+   - post_processor -> POST-PROCESS: assemble final sequence / add structural
+     special tokens / fix offsets. Qwen's is minimal (ByteLevel bookkeeping, no
+     BOS since bos is null); BERT's is where [CLS]...[SEP] get wrapped (Q6/Q15).
+   - decoder -> DECODE (reverse, IDs -> text): ByteLevel decoder undoes the byte
+     mapping (Ġ -> space, bytes -> UTF-8, with the Q21 replacement-char handling).
+   - added_tokens -> not a stage but the reserved special-token registry (the 26
+     tokens), matched BEFORE BPE and bypassing merges (Q15).
+
+   Two things the grounded file shows: ByteLevel appears THREE times (pre_tokenizer
+   in, post_processor, decoder out) — the byte<->Ġ mapping applied on the way in
+   and undone on the way out, the whole round-trip. And the pre_tokenizer regex is
+   Q22 + Q14 made literal.
 
 3. Older GPT-2-style tokenizers don't save a single `tokenizer.json` — they save
    `vocab.json` + `merges.txt` (plus a couple of small JSONs). What does each of
    those two files contain, and what's the relationship between them and the
    `model` section inside a modern `tokenizer.json`?
 
-   _(answer here)_
+   Direct consequence of Q1: the legacy format SPLITS the two big data structures
+   into two separate files. `vocab.json` = the token-string -> ID map (=
+   model.vocab). `merges.txt` = the ordered BPE merge rules, one per line in
+   learned order (= model.merges). The modern tokenizer.json UNIFIES those two
+   into its `model` section AND adds the declarative pipeline objects (normalizer,
+   pre_tokenizer, post_processor, decoder) that the legacy slow format kept
+   implicit in Python code. So: legacy = vocab.json + merges.txt + small JSONs
+   (special_tokens_map, added_tokens) + tokenizer_config; modern fast = all of it
+   in one tokenizer.json + tokenizer_config. See files_vs_code_notes.md for the
+   files-vs-library-code split this question opened up.
 
 4. `tokenizer_config.json` is ~700 bytes; `tokenizer.json` is ~11 MB. What's the
    division of labor between them — what kind of information lives in the tiny
    config vs the huge file, and why does that split make sense?
 
-   _(answer here)_
+   [Answered in Q1 + files_vs_code_notes.md.] tokenizer.json = the tokenizer's
+   DATA + declarative pipeline spec (vocab 151,643 + merges 151,387 ~9.2 MB, plus
+   normalizer/pre_tokenizer/post_processor/decoder specs) = WHAT the tokenizer is.
+   tokenizer_config.json = tiny metadata/settings = HOW transformers uses it
+   (tokenizer_class to instantiate, which token is eos/pad/bos, model_max_length,
+   flags like add_prefix_space/errors/split_special_tokens). The split makes sense
+   because the 11 MB is learned vocab/merges that rarely changes, while the config
+   is a handful of human-set knobs; and the config's tokenizer_class is what tells
+   the library which code to load to interpret the big file.
 
 ## Set B — formats and the fast/slow split
 
