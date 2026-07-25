@@ -657,7 +657,32 @@ a follow-up later, not something to fill in generically.
     serving engine. What does a correct streaming decoder need to do
     differently from decoding each new token in isolation?
 
-    _(answer here)_
+    [Taught — author didn't have this one; grounded in
+    demos/streaming_detokenizer_demo.py, which reproduces both the bug and the
+    fix on the real 🫸 -> [9284, 104, 116] tokens.]
+
+    A correct streaming decoder differs in three ways from per-token decode:
+    1. It decodes against the ACCUMULATED stream, never a token in isolation —
+       all tokens so far, not just the new one.
+    2. It has a stability rule for when it's safe to emit: only release text up
+       to the last COMPLETE UTF-8 character. If the accumulated bytes end
+       mid-character, emit nothing this step and wait.
+    3. It holds the incomplete tail between tokens (the leftover bytes that don't
+       yet form a full character) plus a record of what's already been emitted,
+       so a later token that completes the character emits just the new delta.
+
+    Demo result: naive stream emits '�','�','�' (user sees '���'); correct
+    stream buffers on the first two tokens and emits '🫸' once complete.
+
+    Implementations: (a) prefix-decode + stability check (decode the whole
+    prefix, emit delta unless it ends incomplete — the demo's approach); (b)
+    byte-buffer / incremental UTF-8 decoder (accumulate raw bytes, feed an
+    incremental decoder that buffers the partial tail) — what real engines use,
+    with byte offsets (vLLM's prefix_offset/read_offset) to avoid re-decoding
+    the whole sequence each token. Caveat: the "ends with �" check is a handy
+    heuristic but not bulletproof (the model could emit a real �); the robust
+    version tests at the byte level (is the trailing byte sequence a complete
+    UTF-8 codepoint?), not the string level.
 
 22. GPT-2's tokenizer (and GPT-4's) doesn't run BPE merges on the raw byte
     stream directly — it first splits text into categories (letters, digits,
@@ -665,7 +690,29 @@ a follow-up later, not something to fill in generically.
     What goes wrong if you skip that pre-split and let BPE merge freely
     across category boundaries?
 
-    _(answer here)_
+    Author's core point: you must follow the same process at train and
+    inference, and the pre-split keeps "dog" the SAME token regardless of what
+    punctuation follows it — a stable representation, better learning.
+
+    The two cost-side consequences without the pre-split (answered together):
+    - Vocab bloat: "dog." "dog!" "dog," "dog?" "dog " "dog\"" ... each become
+      their own token whenever BPE finds them frequent enough, so one word eats
+      dozens of slots. Vocab slots aren't free (Q3/Q17 — each is an embedding-
+      table row), so you burn the budget on redundant punctuation-variants
+      instead of distinct useful tokens; for a fixed budget, worse coverage and
+      more fragmentation elsewhere.
+    - Frequency dilution -> worse-trained embeddings (the Q16 link): training
+      occurrences of "dog + punctuation" split across all the variants, so each
+      ("dog." at N/5, "dog!" at N/20, ...) is rarer and its embedding is
+      less-trained — the same undertrained-token mechanism as glitch tokens.
+      The model also redundantly relearns that all variants mean "dog," wasting
+      capacity.
+
+    So the pre-split concentrates all the signal for "dog" onto one
+    well-trained token and lets punctuation be its own token — consistency,
+    no vocab explosion, no frequency dilution. [Vocab-bloat and frequency-
+    dilution halves answered by the assistant at the author's request; the
+    consistency core is the author's.]
 
 23. "Token healing" exists because a prompt can end at a boundary the model
     never actually saw ending there in training — e.g. a prompt ending in
@@ -673,7 +720,29 @@ a follow-up later, not something to fill in generically.
     continue that into one longer token like "Enterprise". What's the actual
     failure mode this causes at generation time, and how would you fix it?
 
-    _(answer here)_
+    [Failure mode corrected + fix taught; the author's fix instinct ("let it
+    complete the word, then generate normally") was directionally right but
+    too optimistic about the failure.]
+
+    Failure mode: the boundary is off-distribution. In training "Enterprise"
+    almost always tokenizes as one token (or Ent+erprise seen together), so the
+    model rarely saw a sequence END on "Ent". Freezing "Ent" as the final token
+    and asking "what's next?" conditions the model on a boundary it barely
+    trained on, so its next-token distribution is skewed. Symptoms: it emits a
+    space after "Ent" (starts a new word instead of completing), doubles
+    characters, or picks an awkward continuation, instead of smoothly producing
+    "Enterprise". The greedy tokenization of the prompt froze an unnatural cut.
+    (Same root as the Q12 trailing-space insight.)
+
+    Fix — token healing: (1) back up: drop the last token ("Ent"), possibly to
+    the last clean boundary; (2) regenerate constrained so the first generated
+    token(s) must start with the removed characters ("Ent"); (3) now the model
+    picks the NATURAL token at the boundary — it can emit "Enterprise" as one
+    token the way training tokenized it, instead of completing from the awkward
+    split. Key point beyond "ask it to complete the word": you remove the frozen
+    last token and let the model re-tokenize the boundary itself, constrained to
+    match the visible characters. (Guidance and some serving stacks implement
+    this.)
 
 24. Tokenizer "fertility" (tokens produced per word) varies enormously by
     language — English measures around 1.2-1.4 tokens/word, some languages
@@ -682,7 +751,34 @@ a follow-up later, not something to fill in generically.
     does that actually mean for a non-English user hitting the same
     prompt-length limit on the same inference engine?
 
-    _(answer here)_
+    Two compounding causes of high fertility (author named the first):
+    - Underrepresentation: the language was rare in the tokenizer's corpus, so
+      few merges were learned; it falls back toward char/byte level -> more
+      tokens.
+    - Script bytes-per-char: non-Latin scripts use more UTF-8 bytes per
+      character (中 = 3 bytes, emoji = 4, grounded earlier), so even at the byte
+      floor one char costs 3-4 tokens. Fertility = underrepresentation x
+      bytes-per-char.
+
+    What the non-English user loses (not just "more tokens"):
+    - Input: hits the same token limit with far less actual content.
+    - Output: the same answer costs more tokens -> more compute/latency, and a
+      max_tokens cap cuts them off sooner.
+    - Cost: per-token pricing -> they pay more for identical information.
+    - So it's an equity issue, not mere inefficiency (the "tokenizer tax" /
+      unfairness-between-languages work): same token limit = genuinely less
+      capability for their language.
+
+    The fix (author asked) — and the catch: design-time, train a larger, more
+    balanced multilingual vocab so those languages earn dedicated tokens (what
+    Qwen did for Chinese, per 03_algorithms); or adapt via vocab expansion +
+    continued pretraining; or go tokenizer-free / byte-latent (BLT, MEGABYTE —
+    04_out_of_scope). The catch: a deployed model's tokenizer is frozen for life
+    (Q29), so you CAN'T fix fertility at inference time for an existing model —
+    it's a model/tokenizer-DESIGN fix (or requires retraining), not a serving
+    fix. For serving a given model the fertility is baked in; the most an engine
+    can do is account for it in limits/pricing. That "design fix, not serving
+    fix" is itself the inference-engineering takeaway.
 
 25. Qwen3's own model family makes an explicit, size-dependent choice: the
     0.6B/1.7B/4B models tie the input embedding and output LM-head weights
@@ -691,7 +787,21 @@ a follow-up later, not something to fill in generically.
     before it goes in the chapter — this is a secondary-source claim.)* Why
     would tying make sense at 0.6B specifically but not at 8B?
 
-    _(answer here)_
+    VERIFIED across real configs (settles the [verify] note): Qwen3-0.6B
+    tie=True (hidden 1024, embed matrix 155.6M ~26% of model); Qwen3-4B
+    tie=True (hidden 2560, 389M ~10%); Qwen3-8B tie=False (hidden 4096, 622M
+    ~8%). Vocab is fixed at 151936 across all sizes.
+
+    The why is Q17's scaling argument + the regularization-vs-capacity tangent,
+    now confirmed. The elegant twist: the embedding matrix gets BIGGER in
+    absolute terms as hidden grows (155.6M -> 389M -> 622M, since it's
+    vocab x hidden), yet 8B unties despite having the largest matrix — because
+    what matters is the FRACTION (26% -> 10% -> 8%). Tie when the matrix is a
+    big fraction of the model (0.6B/4B) and regularization helps a small/
+    data-limited model; untie when it's a small fraction (8B), the extra params
+    are cheap, and the capacity/specialization gain from two independent
+    matrices outweighs the regularization tying would give. See Q17 and the
+    tie-vs-untie note under Q17 for the full mechanism.
 
 26. Gradient-based jailbreak attacks (GCG and its variants) search for
     adversarial token sequences using gradients through the model's own
@@ -701,7 +811,27 @@ a follow-up later, not something to fill in generically.
     about tokenization as part of a model's actual attack surface, rather
     than just an encoding detail?
 
-    _(answer here)_
+    Core (author): the vocab is the attack's entry point / search space — the
+    model can't be fed anything but tokens, so the attacker optimizes over the
+    vocab itself. That makes the tokenizer a security-relevant component, not
+    neutral preprocessing: it defines what the attacker can search over.
+
+    Closed models are harder (author) — precise version: GCG is white-box (needs
+    gradients), so a closed API blocks *direct* GCG. But transfer attacks
+    reintroduce the risk — optimize the suffix on an open surrogate, fire it at
+    the closed model — and transfer works much better when the surrogate shares
+    the target's tokenizer/vocab. So a closed model on a known/common tokenizer
+    is more transferable-attackable; the tokenizer is also the bridge that makes
+    cross-model transfer possible.
+
+    Diversity is a weak defense (author): a different tokenizer only stops the
+    specific found suffix, not the method — the attacker just re-optimizes.
+    Security-through-tokenizer-diversity is friction, not a real mitigation.
+
+    Through-line for the chapter: tokenization is part of the trusted computing
+    base, not a neutral front-end. Third security thread after Q6 (special-token
+    injection) and Q16 (glitch tokens as exploitable inputs) — here the vocab IS
+    the GCG search space.
 
 27. Given a fixed tokenizer (fixed merge rules), is BPE encoding
     deterministic — does the exact same input string always produce the
@@ -709,7 +839,28 @@ a follow-up later, not something to fill in generically.
     (token healing) actually come from, if not from encoding itself being
     ambiguous?
 
-    _(answer here)_
+    Yes, encoding is deterministic: the greedy algorithm applies the fixed
+    merges in learned order, no randomness, so the same string always produces
+    the same token IDs (grounded: "New Enterprise" -> [3564, 25472] both times).
+    Precision on the author's "vice versa is true": the DECODE direction is
+    many-to-one (different token sequences can decode to the same text —
+    "Ent"+"erprise" and "Enterprise" both read "Enterprise"), but the ENCODER
+    never produces those alternatives; it deterministically picks the one greedy
+    tokenization. Ambiguity is "multiple valid tokenizations exist," not "the
+    encoder is unpredictable."
+
+    Where the boundary problem comes from (author nailed it): BPE is
+    deterministic but NOT compositional / not prefix-consistent —
+    tokenize(A)+tokenize(B) != tokenize(A+B), and tokenize(prefix) is not a
+    prefix of tokenize(whole). Grounded: tokenize("Enterprise") = [85647] (one
+    token) but tokenize("Ent")+tokenize("erprise") = [2250, 261, 9671] (three);
+    tokenize("New Ent") = [3564, 4863] is NOT a prefix of
+    tokenize("New Enterprise") = [3564, 25472]. So freezing the prompt at
+    "New Ent" commits to a deterministic-but-unnatural split; the model would
+    have preferred [New, Enterprise], but the greedy tokenization of the prefix
+    locked in the "Ent" split. Determinism doesn't save you because the
+    deterministic tokenization of the prefix != that of the eventual whole —
+    which is exactly the deep reason token healing (Q23) exists.
 
 28. Prefix caching (a future chapter) reuses KV cache blocks for requests
     sharing an identical token prefix — reuse is exact-match at the token
@@ -717,7 +868,27 @@ a follow-up later, not something to fill in generically.
     template could silently break prefix-cache hit rate, purely through how
     it tokenizes?
 
-    _(answer here)_
+    Author's answer: a varying field at the START of the system prompt, like an
+    appended time or date.
+
+    Why early = catastrophic: matching is from token 0, so a varying token at
+    position k makes everything from k onward a miss. At the start (k ~ 2), the
+    ENTIRE system prompt misses every request — you recompute the whole (often
+    long) system-prompt KV every time. "Today is 2026-07-24. You are a helpful
+    assistant. [500 fixed tokens]" gets ~0% prefix reuse, silently, no error —
+    same silent-degradation theme as Q7/Q12.
+
+    Fix — order by volatility: fixed content first, dynamic last. "You are a
+    helpful assistant. [500 fixed tokens] ... Today is 2026-07-24." Now the long
+    fixed prefix is identical across requests (cached/reused) and only the short
+    tail after the date is recomputed. Rule: most-stable content at the front,
+    most-variable at the back.
+
+    Subtle Q27 angle: because BPE isn't compositional, the fixed token right
+    after the variable field can re-tokenize at the seam depending on what the
+    variable field ended with (trailing space, digit, punctuation). So even
+    careful placement needs a clean, stable delimiter between dynamic and static
+    text so the seam tokenizes consistently.
 
 29. A tokenizer's merge vocabulary is learned once, from one training corpus,
     then frozen for the model's entire life. What does it concretely mean
@@ -725,14 +896,58 @@ a follow-up later, not something to fill in generically.
     source code or chemistry notation through a tokenizer trained mostly on
     English prose?
 
-    _(answer here)_
+    Author: it's the domain version of Q24 — out-of-domain content, even English
+    (code, chemistry, math), was underrepresented in the tokenizer's corpus, so
+    it fragments like an underrepresented language does.
+
+    "Bad fit" concretely = low bytes-per-token (high fertility) for that domain,
+    the same metric as Q24. Grounded on Qwen3-0.6B: English prose 5.33
+    bytes/token; Python code 2.40; LaTeX math 1.83; chemistry (aspirin SMILES)
+    1.26; chemistry formula "C6H12O6 + 6O2 -> ..." 1.22 — near the byte floor,
+    ~4x more tokens than prose for the same content, because there are almost no
+    useful merges for those strings.
+
+    The real lesson (honest wrinkle): code is only MODERATE (2.40), not terrible,
+    because Qwen was trained on a lot of code and earned code tokens. So "bad
+    fit" isn't about a domain being exotic — it's about whether it was in THIS
+    tokenizer's corpus. Code in-corpus -> okay; chemistry SMILES not -> near
+    byte-floor.
+
+    Consequences (= Q24): domain-heavy prompts cost multiples more tokens ->
+    shorter effective context, more compute/KV/cost, model reconstructs meaning
+    from near-byte fragments. Can't fix for a deployed model (frozen tokenizer,
+    Q24/Q10) — the fix is a domain-aware tokenizer at design time (code models
+    add indentation/keyword tokens; chem models add SMILES-aware tokens) +
+    retraining.
 
 30. Is tokenization ever actually the bottleneck in a serving engine, or is
     it always negligible next to the GPU forward pass? Under what realistic
     condition — request volume, generation length, tokenizer implementation
     — could it stop being negligible?
 
-    _(answer here)_
+    Author's core (sophisticated): decode is normally the heavy part and is
+    memory-bandwidth-bound (streaming the weights per token) — which is exactly
+    why tokenization usually hides in the noise (the GPU is busy, the tiny CPU
+    tokenize overlaps it). It stops being negligible when there's little decode
+    to hide behind: prefill-heavy + short generation + small model. Then the
+    fixed tokenization cost becomes visible.
+
+    Parallelization (author was unsure): mostly yes, but the two sides differ.
+    - Input tokenization parallelizes well: Rust fast tokenizers thread batch
+      encoding across requests, and within a sequence the regex pre-split (Q22)
+      chops text into independent chunks tokenizable in parallel (BPE merges are
+      sequential only within a short chunk).
+    - Output detokenization is harder: within a stream there's a sequential
+      dependency (the Q21 incremental UTF-8 buffer), and it's per-token,
+      per-request. Across streams it parallelizes, but the real cost is
+      Python/GIL overhead per token per stream — so engines batch it or push it
+      off the critical path (separate threads/processes).
+
+    Input-vs-output takeaway: input tokenize is once-per-request and Rust-fast,
+    so it bottlenecks only in the prefill-heavy/short-gen/small-model case
+    (author's answer). Output detokenize is per-token-per-stream with Python
+    overhead, so it's the MORE COMMON real-world bottleneck — at high-concurrency
+    streaming (Q9). Two different conditions for the two sides.
 
 ## Sources (for citation when the chapter is written)
 
