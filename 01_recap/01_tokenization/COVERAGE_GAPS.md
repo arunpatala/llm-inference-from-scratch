@@ -45,10 +45,12 @@ Ranked by value.
       JSON schema, `tool_calls`, `tool`-role responses). Core to agentic
       inference; we list chat templates generically but not tool-call
       serialization. (04_out_of_scope mentions tool-call tokens exist — expand.)
-- [ ] 7. MULTIMODAL tokenization (image/video placeholder tokens expanded by a
-      processor, pixel/visual tokenization). We only gesture at it in Future
-      Directions + the VLM-OCR example. Modern inference is multimodal; warrants
-      an explicit token-level treatment.
+- [x] 7. MULTIMODAL tokenization — DONE. Interviewed in
+      `07_image_tokenization/01_questions.md` (all 10 Q answered): patches ->
+      continuous embeddings (not IDs) -> projector -> placeholder-token splice;
+      the O(n^2)/prefill-dominated serving cost + visual-token pruning; discrete
+      VQ for generation vs continuous for understanding; M-RoPE 2D positions;
+      "vision vectorizer not tokenizer". Grounded via search (LLaVA/Qwen-VL).
 - [ ] 8. FAST vs SLOW tokenizers (Rust `tokenizers` vs pure-Python) as a named
       architectural distinction (fast tokenizers enable offsets + throughput).
       Fold into the Q9/Q30 speed section. (Minor.)
