@@ -101,13 +101,39 @@ landscape are in `coverage_outline.md`.
    versus HF's readable JSON for a tokenizer file — think about loading speed,
    inspectability, and debugging.
 
-   _(answer here)_
+   [Taught — author didn't know.] Binary protobuf buys compactness + fast parse;
+   JSON buys inspectability (open + read it), greppable/diffable (git diff two
+   tokenizers), debuggable/editable (fix by hand), and portability (any impl can
+   load it). Key insight: a tokenizer loads ONCE at startup, in ms, dwarfed by
+   loading the GB model weights — so the binary's speed/compactness advantage is
+   basically irrelevant in practice; developer experience (inspect/diff/debug/
+   edit/convert) is what matters. That's why the ecosystem converged on JSON
+   (HF tokenizer.json). The binary's concrete downsides: opaque (need
+   sentencepiece_model.proto + a protobuf parser to read it), vocab-expansion
+   pain (parse -> modify -> re-serialize), interop friction (.model -> tokenizer
+   .json is a known task). SentencePiece is binary because it's a Google C++/
+   protobuf-native library that predates HF's JSON format; Llama 1/2 + T5 built on
+   it. Trade-off resolves decisively toward JSON for a tokenizer.
 
 6. tiktoken (GPT-3.5/4) uses `.tiktoken` files storing "mergeable ranks" instead
    of `vocab.json` + `merges.txt`. What do you think "mergeable ranks" means, and
    why might OpenAI use a different format from Hugging Face?
 
-   _(answer here)_
+   [Taught — author didn't know; ties to the Q1 "hugging" trace.] Mergeable ranks
+   = a single map byte-sequence -> rank (an integer), where the rank does DOUBLE
+   DUTY: it's both the token's ID and its merge priority. One map replaces both
+   files: it IS the vocab (every token is a key, its rank is its ID), and it
+   encodes the merges implicitly — to encode, at each step find the adjacent pair
+   (a,b) whose MERGED result a+b is in the map with the smallest rank, merge it,
+   repeat until no adjacent merge is in the map. Same greedy algorithm as the
+   trace, but you look up the merged result a+b (not the pair) and use its rank as
+   priority; no explicit merges list needed, because in BPE a token's ID and its
+   merge priority are two views of the SAME learned order. Why OpenAI differs from
+   HF: tiktoken is a minimal, fast, byte-level-only BPE (regex split + byte BPE,
+   no normalizer, no multi-algorithm pipeline), so it doesn't need tokenizer.json's
+   full declarative spec — one compact ranks file suffices. Design-philosophy
+   split: tiktoken = minimal BPE engine for speed; HF tokenizers = general
+   pipeline framework. (.tiktoken is convertible to vocab.json/merges.txt.)
 
 7. What is the "fast vs slow" tokenizer distinction, and how does it show up in
    the SAVED FILES (which files each produces) and in what the tokenizer can DO
@@ -122,7 +148,29 @@ landscape are in `coverage_outline.md`.
    token need these flags — pick one (e.g. `lstrip`/`rstrip` or `normalized`) and
    say what would go wrong without it.
 
-   _(answer here)_
+   [Reframed to a Qwen3-specific dig: WHY does the 0.6B text model carry all 26.]
+   Qwen3-0.6B's 26 special tokens, grouped: chat (<|endoftext|>, <|im_start|>,
+   <|im_end|>); thinking (<think>,</think>); tools (<tool_call>/</tool_call>,
+   <tool_response>/</tool_response>); vision (<|vision_start|>/end, <|image_pad|>,
+   <|video_pad|>, <|vision_pad|>); visual grounding (<|object_ref_*|>, <|box_*|>,
+   <|quad_*|>); code fill-in-middle (<|fim_prefix|>, <|fim_middle|>, <|fim_suffix|>,
+   <|fim_pad|>); repo-level code (<|repo_name|>, <|file_sep|>).
+
+   Why a 0.6B TEXT model carries vision/video/tool/FIM tokens it can't use
+   (author): it's a SHARED family tokenizer (Q16). The same vocab serves Qwen3-VL
+   (vision/box tokens), Qwen3-Coder (FIM/repo tokens), and the tool/thinking
+   variants.
+   What it buys: (1) family-wide consistency — a token id means the same thing
+   across every Qwen3 model, which is EXACTLY what enables speculative decoding
+   (Q19: draft + target must share the vocab) — a 0.6B can draft for a bigger
+   Qwen3 target because they share this tokenizer; (2) train-once + merging +
+   distillation; (3) a clean upgrade path (extend to vision/tools/code without
+   changing the tokenizer, slots already reserved).
+   What it costs: a few reserved embedding rows the 0.6B text model never trains —
+   the undertrained/glitch-token situation from Q16 and the ~267 unused embedding
+   rows from exercise 5 — but negligible (26 of 151,936; the vocab is dominated by
+   the ~151k regular BPE tokens, Q17). Punchline for the inference book: the
+   shared tokenizer is what makes cross-Qwen speculative decoding possible.
 
 9. Loading a tokenizer for a model checkpoint requires them to MATCH. What,
    concretely, has to match between the tokenizer files and the model weights,
