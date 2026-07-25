@@ -48,3 +48,39 @@ finetune's data doesn't match it — you silently drift off-distribution, no err
 (the Q6 / chat-template-Q4 silent-degradation theme). The author's scar is the
 canonical example: the template was protecting against exactly the bug, and the
 bug was stepping around the template.
+
+## Reasoning stripping vs prefix caching (a real cost of reasoning models)
+
+Dropping prior-turn <think> collides with prefix caching (Q28: reuse needs an
+exact, stable token prefix). Walk a 2-turn conversation:
+- Turn 1 generation: prompt [sys][user Q1][gen-prompt]; model generates
+  <think>r1</think>a1<|im_end|>. So the KV cache built during turn 1 PHYSICALLY
+  contains the reasoning r1 (it was in the sequence while generating).
+- Turn 2: the template renders turn 1's assistant message as a1 WITHOUT r1
+  (stripped). So turn-2's prompt is [sys][user Q1][assistant a1 no-think][user
+  Q2][gen-prompt], but turn-1's cached KV was [sys][user Q1][gen-prompt]
+  [<think>r1</think>a1]. They DIVERGE at the assistant turn — reasoning present in
+  the cache, absent from the new prompt.
+
+Consequence: prefix caching can reuse KV only up to the divergence ([sys][user
+Q1]); the assistant turn's KV cannot be reused, because its token content changed
+when the reasoning was stripped. Everything from the assistant turn onward is
+recomputed. So stripping reasoning BREAKS cross-turn prefix-cache reuse of the
+assistant turns — an inference cost reasoning models pay and non-reasoning models
+don't.
+
+Silver lining / why it's still right: the stripped history is SHORTER (the
+possibly-huge r1 is gone), so the recompute is over fewer tokens than if you kept
+the reasoning; and you avoid carrying long reasoning across every turn (Q30 KV
+bloat). You trade cache reuse for a smaller prefix.
+
+The unavoidable tension:
+- Strip reasoning (Qwen) -> correct distribution + smaller context (Q7), but
+  prefix cache can't reuse the assistant turns.
+- Keep reasoning -> prefix cache reuses the full turn-1 KV, but context bloat +
+  off-distribution history (the Q7 bug).
+You can't have both. Qwen chooses correctness over cache reuse. That's why
+reasoning models are genuinely harder to serve efficiently in multi-turn: the
+very stripping that keeps them correct is what defeats prefix caching. [Open
+serving angle: whether an engine caches the stripped form, or keeps reasoning KV
+around for reuse.]
