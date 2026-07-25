@@ -377,17 +377,60 @@ frequency-merge heuristic ignores. So the tokenization question generalizes to:
 discrete at all?" For continuous domains the frontier answer is increasingly
 "a continuous prediction head, no vocabulary."
 
+## 7. Soft tokens: the input is a vector sequence, not a token sequence
+
+The insight (author's connection, from the image-tokenization interview): a
+transformer does not eat tokens, it eats a sequence of VECTORS. Where each vector
+comes from is a choice — discrete tokenization (text -> ID -> embedding-table
+lookup) is only ONE way to fill the sequence. Other paths produce the input
+vectors DIRECTLY with an encoder, skipping the discrete vocabulary entirely:
+- text -> token-ID lookup (classic tokenization),
+- image -> ViT patch encoder (the vision "vectorizer", Q1 / image-tokenization Q1),
+- long context -> a text encoder that compresses it (soft context compression),
+- a retrieved doc / memory -> an encoder (e.g. xRAG compresses a doc to one vector).
+
+Soft context compression is the direct TEXT-analog of the image vectorizer.
+Encoder-decoder "Latent Context LMs" (2606.09659): a 0.6B encoder maps a long
+token sequence to a SHORTER sequence of continuous latent embeddings (ratios 1:4,
+1:8, 1:16); a 4B decoder consumes them. Continuous embeddings, not discrete IDs;
+the goal is long-context / KV-cache efficiency (KV grows with context length). The
+family: gist tokens (distill a prompt into a few vectors, ~26x), AutoCompressor
+(summary vectors as soft prompts), ICAE (memory slots), 500xCompressor (compress
+into KV values). Umbrella (Prompt Compression survey 2410.12388; Long-Context
+survey 2503.17407): HARD compression prunes/summarizes into fewer *text* tokens
+(still discrete, e.g. LLMLingua); SOFT compression maps into fewer *continuous
+vectors* — the vectorizer family.
+
+The mechanism is one we already met: these soft/gist/latent vectors occupy token
+SLOTS in the decoder's sequence but are continuous — exactly the Q6 image-
+placeholder splice (image embeddings hijack placeholder slots). The
+encoder->latent->decoder shape is the S1 byte-latent architecture pointed at
+CONTEXT instead of bytes; the motive is the S5 KV-compression lever; the "skip the
+vocabulary, produce vectors directly" move is the Q1 image vectorizer.
+
+Unifying frame this unlocks (a strong candidate thesis for the whole chapter):
+tokenization (text -> ID -> vector) is just one way to produce the input-vector
+sequence. Vision vectorizer, soft context compression, and byte-latent are the
+SAME idea — an encoder produces the input vectors directly — applied to image,
+text-context, and bytes respectively. Discrete tokens are one source of input
+vectors, not the only one. Open question: how far can a model run on mostly
+soft/continuous inputs (retrieved memories, compressed context, images) with
+discrete tokens as just the human-facing I/O layer?
+
 ---
 
 ## Closing frame (for the subsection's conclusion)
 
-All six directions are one question in different clothes: the interview treated
+All seven directions are one question in different clothes: the interview treated
 the tokenizer as a fixed, discrete, frequency-learned, compression-optimized,
 once-and-frozen table — and every frontier move relaxes one of those adjectives.
 Learned-latent (S1) relaxes "fixed/discrete"; vocab scaling (S2) relaxes "the
 right size is settled"; reasoning (S3) exposes the cost of "discrete hides
 sub-token structure"; the attack surface (S4) exposes "canonical = trusted";
 runtime granularity (S5) relaxes "once and frozen"; cross-domain (S6) relaxes
-"frequency equals meaning, and the unit is discrete at all". The unifying thesis:
-tokenization is the choice of the model's atomic unit of computation, and the
-field is renegotiating every property of that choice at once.
+"frequency equals meaning, and the unit is discrete at all"; and soft tokens (S7)
+relaxes the deepest assumption of all — that the model's input is a *token*
+sequence rather than a *vector* sequence. The unifying thesis: tokenization is
+the choice of the model's atomic unit of computation, discrete tokens are only
+one way to produce the input-vector sequence, and the field is renegotiating
+every property of that choice at once.
