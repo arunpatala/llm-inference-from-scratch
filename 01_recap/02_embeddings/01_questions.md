@@ -106,3 +106,67 @@ units exist (word -> subword -> byte); this covers how a unit becomes a vector
    So: jointly-optimized-for-the-real-task + subword + gets-contextualized beats
    separately-pretrained-for-a-proxy + word-level + static on every axis. The
    embedding table is now just the model's first layer.
+
+## Set B — embedding MODELS (retrieval / semantic search / RAG)
+
+A DIFFERENT use of "embeddings" from Set A: not the LLM's per-token input table,
+but a model that maps a whole sentence/document to ONE vector for similarity
+search. Grounded: Qwen3-Embedding is the SAME Qwen3 base (0.6B-8B) repurposed.
+
+6. How do you collapse a sequence of per-token vectors into a SINGLE vector for a
+   whole text, and how do you train it so similar texts land close?
+
+   Pooling (author: mean or last-token): mean pooling (average all token vectors),
+   last-token pooling (final token's hidden state), or CLS pooling (BERT-style
+   [CLS] vector). Decoder LLMs (Qwen3-Embedding) use LAST-TOKEN (EOS) pooling
+   specifically because attention is causal — only the last token has attended to
+   the whole sequence, so its final hidden state has seen everything (mean/CLS
+   came from bidirectional BERT). Qwen3-Embedding uses the final <EOS> hidden
+   state.
+   Training (author: like word embedding models, similar high / opposite low):
+   contrastive learning — pull POSITIVES together (paraphrases, query<->relevant-
+   doc), push NEGATIVES apart (unrelated), using in-batch negatives + mined hard
+   negatives. The word2vec link (author): same similarity-geometry idea as Q2 but
+   at the SENTENCE level with explicit PAIR supervision (contrastive) instead of
+   word2vec's context-window self-supervision. word2vec: "same context -> close";
+   embedding model: "same meaning -> close".
+   Recipe: run text through the LLM -> pool to one vector (last-token for decoders)
+   -> contrastively fine-tune so similar texts are close. That's how the same
+   Qwen3 base becomes Qwen3-Embedding.
+
+   Where positives come from (author's insight — co-occurring text as positives):
+   co-occurrence gives positive pairs for FREE, self-supervised — adjacent
+   passages, two spans of the same doc, title<->body, question<->answer,
+   query<->clicked-doc, hyperlinks. This is how Contriever/E5/GTE pretrain (with
+   in-batch negatives). It is the SENTENCE-level analog of word2vec: word2vec used
+   window co-occurrence for word similarity; embedding models use passage
+   co-occurrence for sentence similarity — the distributional hypothesis one level
+   up ("know a passage by the company it keeps"), connecting Q2<->Q6. Nuance:
+   co-occurrence positives are noisy, so the usual pipeline is two-stage:
+   (1) self-supervised contrastive pretraining on co-occurrence positives (cheap,
+   huge), then (2) supervised contrastive fine-tuning on labeled pairs (MS MARCO,
+   NLI) + hard-negative mining. Qwen3-Embedding uses this multi-stage recipe.
+
+7. Bi-encoder vs cross-encoder, and how serving an embedding model differs from a
+   generative LLM.
+
+   (a) Bi-encoder (author): embeds documents and queries INDEPENDENTLY, so docs
+   are embedded once offline into a vector DB; at query time embed just the query
+   (one forward pass) + fast approximate-nearest-neighbor (ANN) search over
+   precomputed vectors -> scales to millions, no per-query recompute. Cross-encoder
+   (author): runs query+doc TOGETHER (no separable embedding), so nothing can be
+   precomputed — one forward pass per (query,doc) pair, O(num_docs) per query;
+   accurate (full token interaction) but can't scale. Pipeline: two-stage —
+   bi-encoder retrieves top-k cheaply, cross-encoder reranks the k. Qwen ships both
+   (Qwen3-Embedding bi + Qwen3-Reranker cross).
+
+   (b) Serving difference (the capstone): an embedding model SKIPS almost
+   everything we built for generation. No autoregressive decode loop — a single
+   forward pass then pool to one vector. No growing KV cache, no decode phase, no
+   stop tokens, no streaming detok. All prefill, no decode -> compute-bound and
+   batch-friendly (encode huge batches in parallel) vs the memory-bandwidth-bound
+   decode of a generative LLM. The bottleneck moves: generative LLM = decode loop
+   + KV memory; embedding SYSTEM = forward-pass throughput for batch-encoding the
+   corpus + the ANN index (vector DB, FAISS/HNSW), a different system from the
+   model server. The decode/KV/streaming complexity vanishes; the new complexity
+   is the vector index.
