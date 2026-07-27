@@ -74,6 +74,55 @@ the output LM head.
     position is added separately (RoPE — the next recap chapter). And attention is
     what does the contextualization (also upcoming). End on that hand-off.
 
+## SUPERSET SCOPE — the notes cover all branches (versions get derived)
+
+The 11 subsections above are Part A (the LLM's INPUT embedding table). To be a
+superset, the notes also cover the other meanings/branches of "embeddings". Any
+deliverable version (blog / subsection / full chapter) selects a slice; the notes
+hold everything.
+
+### Part A — Input embeddings (the LLM's first layer) = subsections 1-11 above.
+
+### Part B — Embedding MODELS (retrieval / semantic search / RAG) [the big miss]
+A *different* use of "embeddings" from Part A. Cover:
+- Input embedding (Part A) = per-TOKEN, one vector per token, then contextualized.
+  Embedding model = one vector per whole SENTENCE/DOCUMENT, for similarity/search.
+- How they're built: a repurposed encoder (BERT-style) or a decoder LLM with a
+  pooling head, fine-tuned with CONTRASTIVE learning (similar texts -> high cosine,
+  dissimilar -> low). Pooling strategies: mean / CLS / last-token.
+- Use cases: RAG retrieval, semantic search, clustering, reranking, dedup.
+- Bi-encoder (embed query + doc separately, cosine) vs cross-encoder (joint,
+  reranking) — the retrieval-vs-rerank split.
+- Grounding: Qwen ships dedicated Qwen3-Embedding models (note the tie_word_
+  embeddings=false observation from the tokenization Q25 came from a Qwen3-
+  Embedding config).
+- Inference angle: embedding-model serving is a batch-encode workload (encode many
+  texts -> vectors -> vector DB); prefill-heavy, no autoregressive decode; the
+  "cost" is the forward pass + the vector index, not KV cache. Different serving
+  profile from a generative LLM.
+
+### Part C — Positional embeddings (the "where") [defer deep dive to RoPE chapter]
+Token embedding = WHAT a token is; positional embedding = WHERE it sits. Brief
+lineage: sinusoidal (original Transformer 2017) -> learned absolute (BERT/GPT-2)
+-> RoPE (rotary, modern; Qwen3). Full treatment is the RoPE recap chapter; here
+only the what-vs-where distinction and that position is ADDED separately.
+
+### Part D — Adjacent topics (for completeness / cross-reference)
+- Analogy arithmetic (king - man + woman ~ queen): the famous demonstration that
+  DIRECTIONS in embedding space carry relationships (gender, plural, tense). Show
+  it on real vectors in the demo.
+- Count-based / LSA era (pre-word2vec): co-occurrence matrices + SVD/PMI were the
+  first distributional dense vectors (1990s-2000s), before neural word2vec. A
+  one-paragraph "prehistory" note between one-hot and word2vec.
+- Similarity metric: cosine similarity (direction, magnitude-invariant) vs raw dot
+  product; why cosine for retrieval. Embedding anisotropy / the "narrow cone"
+  problem (LLM embeddings cluster in a cone; cosine can be misleading) — a mention.
+- Segment / token-type embeddings (BERT's [CLS]/[SEP] + segment IDs) — encoder-era,
+  a mention (decoder-only LLMs drop them).
+- Multimodal embeddings: image/audio vectors projected into the SAME embedding
+  space (the image-tokenization "vectorizer" + soft-tokens S7 frame) — already in
+  subsection 10; cross-link.
+
 ## The one demo (Study-Note tier)
 Load Qwen3-0.6B's real embedding table and show: (a) cosine similarity of related
 tokens (` cat`/` dog` closer than ` cat`/` Tuesday`); (b) that it's tied
