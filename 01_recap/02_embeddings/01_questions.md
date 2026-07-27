@@ -218,12 +218,21 @@ search. Grounded: Qwen3-Embedding is the SAME Qwen3 base (0.6B-8B) repurposed.
     (deferred to RoPE chapter): sinusoidal (Transformer 2017) -> learned absolute
     (BERT/GPT-2) -> RoPE rotary (Qwen3). Here: one-paragraph hint + hand off.
 
-11. Count-based / LSA prehistory (Part D). Before neural word2vec, the first
-    distributional DENSE vectors came from count-based methods: build a word x
-    context co-occurrence matrix, weight it (PMI), and factorize with SVD (LSA/LSI,
-    1990s-2000s). word2vec (2013) reached similar geometry with a neural predictor.
-    A one-paragraph bridge between one-hot and word2vec — same distributional idea,
-    counts-then-SVD instead of predict-then-learn.
+11. Count-based / LSA prehistory (Part D). Author reasoned it: represent a word
+    by its co-occurrence profile (a multi-hot/count vector of which words appear
+    near it) -> stack into the vocab x vocab co-occurrence matrix; but that's
+    still vocab-dim and sparse (the one-hot problem, as counts). The missing step
+    (author): low-rank factorization -> SVD. Factorize the co-occurrence matrix,
+    keep the top-k components -> dense k-dim vectors (~300). That's LSA/LSI
+    (1990s), usually with PMI-weighted counts first (so the/a don't dominate).
+    Dense word vectors from counting + linear algebra, no neural net.
+    The payoff that bridges to the neural era: Levy & Goldberg 2014 ("Neural Word
+    Embedding as Implicit Matrix Factorization") proved word2vec's skip-gram-with-
+    negative-sampling is IMPLICITLY factorizing a (shifted PMI) co-occurrence
+    matrix — the same matrix LSA factorizes explicitly. So LSA = explicitly
+    build+SVD; word2vec = implicitly factorize the same statistics via predict+SGD.
+    Same distributional signal, same low-rank structure, two routes (count-then-
+    factorize vs predict-then-learn) — why they land in similar geometry.
 
 12. Cosine vs dot + anisotropy (Part D). [Searched + confirmed.] Retrieval uses
     cosine (or normalized dot), the LM head uses raw dot — and WHY is confirmed:
@@ -248,11 +257,22 @@ search. Grounded: Qwen3-Embedding is the SAME Qwen3 base (0.6B-8B) repurposed.
       discounting fix, arXiv 2305.10610). Magnitude/frequency artifacts are
       documented, not hand-waving.
 
-13. Segment / token-type embeddings (Part D). BERT added SEGMENT embeddings
-    (sentence A vs B) plus [CLS]/[SEP] for its paired-input / next-sentence tasks —
-    a third embedding summed with token + position. Decoder-only LLMs (GPT/Qwen)
-    DROP them (single stream, no paired-sentence task). Encoder-era trivia; a
-    mention, and it ties to the tokenization post-processor ([CLS]/[SEP]).
+13. Segment / token-type embeddings (Part D). [Taught — author delegated.]
+    Why BERT needed a THIRD embedding: it was trained on PAIRED-input tasks (Next
+    Sentence Prediction, QA = question+passage, NLI = premise+hypothesis), feeding
+    two texts at once as [CLS] A [SEP] B [SEP]. Token embedding says what, position
+    says where, but neither says WHICH sentence (A vs B) a token is in. So BERT
+    adds a segment embedding (learned vector for segment 0 on all A tokens, 1 on
+    all B tokens); input = token + position + segment, summed.
+    Why decoder LLMs drop it: a generative LLM is a SINGLE continuous stream (no
+    two inputs to distinguish), and where it has structure (system/user/assistant
+    turns) it marks it with SPECIAL TOKENS in the stream (<|im_start|>, roles,
+    <|im_end|> — the chat template), not a separate embedding channel.
+    The clean contrast (chapter connection): two ways to mark structure — BERT = a
+    separate embedding channel (segment); decoder LLMs = special tokens in the
+    stream (chat template, tokenization Q6/Q15; [CLS]/[SEP] post-processor,
+    tokenizer-files Q2). Segment embeddings are an encoder-era artifact decoders
+    made obsolete by moving structure into the token sequence itself.
 
 14. Multimodal cross-link (Part D / subsection 10). Image/audio patch vectors are
     projected (by the projector/connector) into the SAME embedding space as text
