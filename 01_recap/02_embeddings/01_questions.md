@@ -225,13 +225,28 @@ search. Grounded: Qwen3-Embedding is the SAME Qwen3 base (0.6B-8B) repurposed.
     A one-paragraph bridge between one-hot and word2vec — same distributional idea,
     counts-then-SVD instead of predict-then-learn.
 
-12. Cosine vs dot + anisotropy (Part D). Cosine similarity = direction only
-    (magnitude-invariant, normalizes out length); dot product = direction AND
-    magnitude. Retrieval uses cosine (or normalized dot) to compare MEANING, not
-    text length. Caveat: LLM/contextual embeddings are ANISOTROPIC — they cluster
-    in a narrow cone rather than spreading over the sphere, so raw cosine can
-    inflate similarities (everything looks somewhat alike); mitigations like
-    whitening/normalization exist. A mention.
+12. Cosine vs dot + anisotropy (Part D). [Searched + confirmed.] Retrieval uses
+    cosine (or normalized dot), the LM head uses raw dot — and WHY is confirmed:
+    - Concrete example (why retrieval strips magnitude): query q; Doc A perfectly
+      aligned (0deg) norm 1, Doc B 45deg-off norm 3. Raw dot: q.A = 1.00, q.B =
+      3*cos45 = 2.12 -> B (less relevant, bigger norm) WINS. Cosine: A=1.00,
+      B=0.707 -> A wins correctly. Vector norm varies for reasons unrelated to
+      relevance (length, frequency, repetition), so raw dot lets a norm artifact
+      hijack the ranking; cosine compares only direction/meaning.
+    - The stronger reason: embedding models are TRAINED with cosine and L2-
+      normalized (common practice, boosts retrieval), so cosine is the metric the
+      space was built for. Cosine = dot for NORMALIZED vectors, so systems often
+      normalize once then use plain dot (same ranking, cheaper). (Pinecone; "cosine
+      = dot for normalized vectors".)
+    - LM head uses raw dot because it's ONE softmax distribution over all tokens,
+      no cross-query comparison to protect against, so nothing to normalize; raw
+      logits are what softmax needs. (The "magnitude encodes confidence" story is a
+      soft intuition, not the real reason.)
+    - Anisotropy caveat, sharpened: LLM/contextual embeddings cluster in a narrow
+      cone, inflating cosine similarities; and high-frequency words get cosine
+      UNDERESTIMATED because their large L2 norms distort the denominator (L2-norm-
+      discounting fix, arXiv 2305.10610). Magnitude/frequency artifacts are
+      documented, not hand-waving.
 
 13. Segment / token-type embeddings (Part D). BERT added SEGMENT embeddings
     (sentence A vs B) plus [CLS]/[SEP] for its paired-input / next-sentence tasks —
