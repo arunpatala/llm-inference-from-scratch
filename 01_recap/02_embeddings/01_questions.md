@@ -206,3 +206,44 @@ search. Grounded: Qwen3-Embedding is the SAME Qwen3 base (0.6B-8B) repurposed.
    drafter is ~1 layer, the LM head over a 128-256K vocab is ~half the drafter
    cost, so FR-Spec/VocabTrim/DynaSpec trim the DRAFT's output vocab to cut this
    matmul+softmax. Re-derives why the LM head is the drafter bottleneck.
+
+## Set D — positional (hint), adjacent topics, multimodal cross-link
+
+10. Positional embeddings (Part C — HINT ONLY, deep dive deferred to the RoPE
+    recap chapter, per the author's scoping call). Token embedding = WHAT a token
+    is; positional = WHERE it sits. Why position is needed: attention is
+    permutation-invariant (a bag of tokens, no inherent order), so without a
+    positional signal "dog bites man" and "man bites dog" look identical to the
+    model. So a positional signal is ADDED to the token embeddings. Lineage
+    (deferred to RoPE chapter): sinusoidal (Transformer 2017) -> learned absolute
+    (BERT/GPT-2) -> RoPE rotary (Qwen3). Here: one-paragraph hint + hand off.
+
+11. Count-based / LSA prehistory (Part D). Before neural word2vec, the first
+    distributional DENSE vectors came from count-based methods: build a word x
+    context co-occurrence matrix, weight it (PMI), and factorize with SVD (LSA/LSI,
+    1990s-2000s). word2vec (2013) reached similar geometry with a neural predictor.
+    A one-paragraph bridge between one-hot and word2vec — same distributional idea,
+    counts-then-SVD instead of predict-then-learn.
+
+12. Cosine vs dot + anisotropy (Part D). Cosine similarity = direction only
+    (magnitude-invariant, normalizes out length); dot product = direction AND
+    magnitude. Retrieval uses cosine (or normalized dot) to compare MEANING, not
+    text length. Caveat: LLM/contextual embeddings are ANISOTROPIC — they cluster
+    in a narrow cone rather than spreading over the sphere, so raw cosine can
+    inflate similarities (everything looks somewhat alike); mitigations like
+    whitening/normalization exist. A mention.
+
+13. Segment / token-type embeddings (Part D). BERT added SEGMENT embeddings
+    (sentence A vs B) plus [CLS]/[SEP] for its paired-input / next-sentence tasks —
+    a third embedding summed with token + position. Decoder-only LLMs (GPT/Qwen)
+    DROP them (single stream, no paired-sentence task). Encoder-era trivia; a
+    mention, and it ties to the tokenization post-processor ([CLS]/[SEP]).
+
+14. Multimodal cross-link (Part D / subsection 10). Image/audio patch vectors are
+    projected (by the projector/connector) into the SAME embedding space as text
+    token embeddings (image-tokenization Q1/Q6 — the "vision vectorizer"; soft
+    context vectors do the same). So the embedding space is the shared destination
+    for text, image, and compressed-context — the Future-Directions S7 frame: "the
+    model's input is a vector sequence; discrete tokens are just one source of
+    those vectors." Cross-link to 07_image_tokenization and future_directions S7;
+    no new content, just the pointer.
