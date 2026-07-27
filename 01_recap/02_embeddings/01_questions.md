@@ -170,3 +170,39 @@ search. Grounded: Qwen3-Embedding is the SAME Qwen3 base (0.6B-8B) repurposed.
    corpus + the ANN index (vector DB, FAISS/HNSW), a different system from the
    model server. The decode/KV/streaming complexity vanishes; the new complexity
    is the vector index.
+
+## Set C — Part A inference subsections (LM head, tied embeddings, cost)
+
+8. After the transformer, you have a final hidden vector (1024-d). How do you get
+   from it back to "which token comes next"? And in a tied model, what IS the LM
+   head relative to E, and what does logit_i mean?
+
+   Mechanism (author): a hidden x vocab matmul -> logits -> softmax -> probs ->
+   sample. Correction of "it's the inverse of E": NOT the inverse — E is
+   151936x1024, not square, so no inverse exists. The LM head reuses E as its
+   TRANSPOSE (E^T, 1024x151936) so dims line up: hidden(1x1024) @ E^T = logits.
+   Transpose = same weights flipped, not an inverse.
+   What logit_i computes (author): logit_i = hidden . E[i] = dot product of the
+   hidden vector with token i's embedding row. Geometrically a SIMILARITY —
+   "which token's embedding does my hidden state most point toward?"; highest dot
+   wins. A similarity search over the embedding rows, not an undo of the embedding.
+   Elegant symmetry: input E maps ID->vector; output E^T scores the hidden state
+   against every token's embedding. Same matrix both directions — literally the Q1
+   "geometry = similarity" idea at the output: generation = find the token whose
+   embedding is closest to where the hidden state landed.
+
+9. The input embedding and the LM head use the SAME matrix E (tied), yet one is
+   cheap and one expensive. Which is which and why?
+
+   Author: token id -> embedding is one op (gather a single row of E, ~zero
+   compute, cheap); hidden -> tokens has to compute similarity with EVERY
+   embedding (all 151936 rows). Numbers: the output is a 1024x151936 matmul
+   (~155.6M multiply-adds EVERY step) + softmax over 151936 — often the single
+   most expensive op per token. So the vocab-size cost the tokenization chapter
+   deferred lives HERE (the LM head), not the input lookup: the same 155.6M matrix
+   (26% of Qwen3-0.6B, Q17) is cheap to READ (one row) but expensive to USE as
+   output (all rows, every step) — input = "look up one", output = "score against
+   all". This is exactly the FR-Spec thread (tokenization Q19): once a spec-decode
+   drafter is ~1 layer, the LM head over a 128-256K vocab is ~half the drafter
+   cost, so FR-Spec/VocabTrim/DynaSpec trim the DRAFT's output vocab to cut this
+   matmul+softmax. Re-derives why the LM head is the drafter bottleneck.
