@@ -22,6 +22,39 @@ bi-encoder: dense single-vector retrieval CANNOT be scaled away — the fix is
 multi-vector or hybrid/lexical. Arguably the most important embeddings result of
 the cycle for a retrieval chapter.
 
+## 0a. Synthesis frame: the retrieval Pareto surface (author's synthesis)
+
+The organizing frame for the whole retrieval-embeddings story (unifies S0 LIMIT,
+S1 compression, S4 multi-vector). Retrieval embedding design is not "pick the best
+method" — it is navigating a Pareto SURFACE (quality vs cost), tunable at test
+time, with orthogonal COMPOSABLE knobs:
+- # vectors per doc -> expressiveness vs storage/compute (MetaEmbed tunable
+  multi-vector).
+- dims per vector -> quality vs vector size (Matryoshka/MRL truncation).
+- bits per number -> quality vs storage/speed (binary/int8, RaBitQ).
+They stack: MRL-truncate the dims, then binary-quantize the bits, then choose the
+number of vectors -> ~96x compression at ~99% quality in production (Vespa/Azure do
+MRL x binary). Each knob is a Pareto trade-off; composed, a whole surface to pick
+from for a latency/storage/recall budget.
+
+Where LIMIT fits (and becomes useful, not just a downer): LIMIT bounds the
+single-vector (m=1) SLICE of this surface — no amount of dims or bits buys past
+it, because the bound is on m=1's rank. So the m=1 frontier CAPS OUT; adding
+vectors (m>1) opens a HIGHER frontier above it. LIMIT draws the wall on the cheap
+end of the surface; multi-vector is how you climb to a new one.
+
+MUVERA is the clever move: instead of picking a point on the frontier, it tries to
+BEND the frontier itself — multi-vector quality at single-vector search cost
+(approximately). Frontier-shifting, not frontier-sliding.
+
+One-line thesis: retrieval embedding design = navigating a Pareto surface
+(vectors x dims x bits) for a quality/cost budget — single-vector has a proven
+ceiling (LIMIT), multi-vector opens a higher frontier, and methods like MUVERA
+shift the frontier rather than slide along it. Echoes the tokenization S5
+"granularity as a runtime knob against KV" — the same tunable-resource-allocation
+theme, now for retrieval. Ties to open question 11 (do the knobs compose cleanly,
+or does compression compound with the multi-vector approximation error?).
+
 ## 1. Compressed / efficient embeddings (the "compressed embeddings" ask)
 
 - Matryoshka Representation Learning (MRL, Kusupati et al., arXiv 2205.13147,
